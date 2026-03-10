@@ -107,7 +107,7 @@ CUDA_VISIBLE_DEVICES=0 python3 stage-1_train.py --model_path sfairXC/FsfairX-LLa
 ```
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python3 stage-2_prepare.py --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 --model_family llama3 --dataset_path <PATH_STAGE2_JSONL> --dataset_split train --n_shards 1 --shard_idx 1 --device 0 && \
+CUDA_VISIBLE_DEVICES=0 python3 stage-2_prepare.py --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 --model_family llama3 --dataset_path <PATH_STAGE2_JSONL> --dataset_split all --n_shards 1 --shard_idx 1 --device 0 && \
 CUDA_VISIBLE_DEVICES=0 python3 stage-2_train.py --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 --model_family llama3 --multi_objective_dataset mdo --preference_dataset data/stage_2 --reference_dataset RLHFlow/UltraFeedback-preference-standard --device 0
 ```
 
@@ -133,7 +133,7 @@ CUDA_VISIBLE_DEVICES=0 python3 stage-2_prepare.py \
   --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
   --model_family llama3 \
   --dataset_path data/stage_2 \
-  --dataset_split train --n_shards 1 --shard_idx 1 --device 0
+  --dataset_split all --n_shards 1 --shard_idx 1 --device 0
 ```
 
 ### Stage 2 prepare (reference data)
@@ -142,7 +142,7 @@ CUDA_VISIBLE_DEVICES=1 python3 stage-2_prepare.py \
   --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
   --model_family llama3 \
   --dataset_path RLHFlow/UltraFeedback-preference-standard \
-  --dataset_split train --n_shards 1 --shard_idx 1 --device 0
+  --dataset_split all --n_shards 1 --shard_idx 1 --device 0
 ```
 
 ### Stage 2 prepare (reward-bench eval data)
@@ -195,13 +195,13 @@ model/
 │       │   └── reward-bench-filtered.safetensors
 │       │
 │       ├── stage_2-train/
-│       │   └── stage_2-train.safetensors
+│       │   └── stage_2-all.safetensors
 │       │
-│       └── UltraFeedback-preference-standard-train/
-│           └── UltraFeedback-preference-standard-train.safetensors
+│       └── UltraFeedback-preference-standard-all/
+│           └── UltraFeedback-preference-standard-all.safetensors
 │
 ├── gating_network/
-│   └── gating_network_<base_model>_mo_mdo_pref_stage_2-train_T10.0_N2000_seed0.pt
+│   └── gating_network_<base_model>_mo_mdo_pref_stage_2-all_T10.0_N2000_seed0.pt
 │
 ├── regression_weights/
 │   └── <base_model>_mdo.pt

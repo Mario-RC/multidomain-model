@@ -278,6 +278,12 @@ def main():
     parser.add_argument("--multi_objective_dataset", type=str, default="RLHFlow/ArmoRM-Multi-Objective-Data-v0.1", help="Dataset used for Stage 1 regression (name used for saving)")
     parser.add_argument("--preference_dataset", type=str, default="RLHFlow/pair_data_v2_80K_wsafety", help="Pairwise preference dataset for Stage 2 training")
     parser.add_argument("--reference_dataset", type=str, default=None, help="Dataset for verbosity debiasing (defaults to preference_dataset if None)")
+    parser.add_argument(
+        "--prepared_split",
+        type=str,
+        default="all",
+        help="Prepared split suffix used by stage-2_prepare outputs (e.g., all, train, val, test).",
+    )
     # `--device` is mostly ignored under `torchrun`; `LOCAL_RANK` drives device selection.
     parser.add_argument("--device", type=str, default="0", help="Ignored by torchrun, uses LOCAL_RANK instead")
     parser.add_argument("--learning_rate", type=float, default=1e-3, help="Learning rate for AdamW optimizer")
@@ -321,9 +327,9 @@ def main():
     args.model_name = args.model_path.split("/")[-1]
     args.multi_objective_dataset_name = args.multi_objective_dataset.split("/")[-1]
 
-    # Append `-train` suffix (matches `stage-2_prepare.py` outputs).
-    args.preference_dataset_name = args.preference_dataset.split("/")[-1] + "-train"
-    args.reference_dataset_name = args.reference_dataset.split("/")[-1] + "-train"
+    # Match stage-2_prepare output naming convention: <dataset>-<prepared_split>.
+    args.preference_dataset_name = args.preference_dataset.split("/")[-1] + f"-{args.prepared_split}"
+    args.reference_dataset_name = args.reference_dataset.split("/")[-1] + f"-{args.prepared_split}"
 
     # --- Define load paths ---
     # Preference embeddings path pattern (inside dataset-split folder).

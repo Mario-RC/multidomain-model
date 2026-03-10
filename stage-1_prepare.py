@@ -2,6 +2,7 @@
 
 import os
 import sys
+import math
 import torch
 import datasets
 # from datasets import Features, Value, Sequence # No longer needed for loading
@@ -19,6 +20,24 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 print(f"Stage 1 Prepare started at {datetime.now().isoformat()}")
+
+
+def _is_valid_score_value(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, float) and math.isnan(value):
+        return False
+    return True
+
+
+def _has_at_least_one_attribute_score(record: dict) -> bool:
+    scores = record.get("scores")
+    if not isinstance(scores, dict):
+        return False
+    for attr in attributes:
+        if _is_valid_score_value(scores.get(attr)):
+            return True
+    return False
 
 # Project-specific regression targets drawn from several evaluation dimensions
 attributes = [
@@ -58,6 +77,7 @@ for path in args.dataset_path:
     print(f"Reading file: {path}")
     loaded_count = 0
     skipped_malformed = 0
+    skipped_no_attribute_score = 0
     try:
         with open(path, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f):
@@ -65,13 +85,20 @@ for path in args.dataset_path:
                     record = json.loads(line.strip())
                     # Keep only records that contain a valid messages list
                     if 'messages' in record and isinstance(record['messages'], list):
-                        all_data.append(record)
-                        loaded_count += 1
+                        if _has_at_least_one_attribute_score(record):
+                            all_data.append(record)
+                            loaded_count += 1
+                        else:
+                            skipped_no_attribute_score += 1
                     else:
                         skipped_malformed += 1
                 except json.JSONDecodeError:
                     skipped_malformed += 1
-        print(f"Successfully loaded {loaded_count} records from {path}. Skipped {skipped_malformed} malformed lines.")
+        print(
+            f"Successfully loaded {loaded_count} records from {path}. "
+            f"Skipped {skipped_malformed} malformed lines and "
+            f"{skipped_no_attribute_score} records without attribute scores."
+        )
     except Exception as e:
         print(f"FATAL ERROR: Failed to read or parse file '{path}'.")
         print(f"Details: {e}")

@@ -20,14 +20,14 @@ CUDA_VISIBLE_DEVICES=0 python3 stage-2_prepare.py \
 --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
 --model_family llama3 \
 --dataset_path data/stage_2 \
---dataset_split train --n_shards 1 --shard_idx 1 --device 0
+--dataset_split all --n_shards 1 --shard_idx 1 --device 0
 
 ### stage 2 prepare for reference data ###
 CUDA_VISIBLE_DEVICES=0 python3 stage-2_prepare.py \
 --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
 --model_family llama3 \
 --dataset_path RLHFlow/UltraFeedback-preference-standard \
---dataset_split train --n_shards 1 --shard_idx 1 --device 0
+--dataset_split all --n_shards 1 --shard_idx 1 --device 0
 
 ### stage 2 prepare for reward-bench eval data ###
 CUDA_VISIBLE_DEVICES=0 python3 stage-2_prepare.py \

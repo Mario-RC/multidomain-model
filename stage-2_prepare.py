@@ -1,6 +1,8 @@
 # stage-2_prepare.py
 
 import os
+import math
+import sys
 import torch
 import datasets
 from transformers import AutoTokenizer, AutoModel, AutoConfig
@@ -23,6 +25,47 @@ token_patterns = {
 
 print(f"Stage 2 Prepare started at {datetime.now().isoformat()}")
 
+
+def _is_valid_score_value(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, float) and math.isnan(value):
+        return False
+    return True
+
+
+def _extract_score_dicts(example: dict):
+    score_dicts = []
+
+    direct_scores = example.get("scores")
+    if isinstance(direct_scores, dict):
+        score_dicts.append(direct_scores)
+
+    evaluation = example.get("evaluation")
+    if isinstance(evaluation, dict):
+        stage_1_scores = evaluation.get("stage_1_scores")
+        if isinstance(stage_1_scores, dict):
+            score_dicts.append(stage_1_scores)
+
+        stage_2_scores = evaluation.get("stage_2_scores")
+        if isinstance(stage_2_scores, dict):
+            score_dicts.append(stage_2_scores)
+
+    return score_dicts
+
+
+def _has_at_least_one_attribute_score(example: dict) -> bool:
+    score_dicts = _extract_score_dicts(example)
+    if not score_dicts:
+        # If no score metadata exists, keep the sample (e.g. generic preference datasets).
+        return True
+
+    for score_dict in score_dicts:
+        for value in score_dict.values():
+            if _is_valid_score_value(value):
+                return True
+    return False
+
 def find_token_for_gating(lst, model_family):
     """Return the start index of the last model-specific token pattern."""
     token_pattern = token_patterns[model_family]
@@ -40,7 +83,12 @@ parser.add_argument("--model_path", type=str, default="sfairXC/FsfairX-LLaMA3-RM
 parser.add_argument("--model_family", type=str, default="llama3", help="Model family (llama3 or gemma2)")
 parser.add_argument("--dataset_path", type=str, default="RLHFlow/UltraFeedback-preference-standard", help="Path to the dataset (HuggingFace path or local folder)")
 parser.add_argument("--source", default=None, type=str, help="Source filter for the dataset")
-parser.add_argument("--dataset_split", type=str, default="train", help="Dataset split to use")
+parser.add_argument(
+    "--dataset_split",
+    type=str,
+    default="all",
+    help="Dataset split to use. Use 'all' to aggregate all available splits.",
+)
 parser.add_argument("--n_shards", type=int, default=1, help="Total number of shards to divide the dataset into")
 parser.add_argument("--shard_idx", type=int, default=1, help="Index of the current shard")
 parser.add_argument("--device", type=int, default=0, help="CUDA device index to use for computation")
@@ -78,17 +126,40 @@ all_data = []
 if args.dataset_path.endswith(".jsonl") or args.dataset_path.endswith(".json"):
     print(f"Manually loading local JSONL file: {args.dataset_path}")
     import json
+    kept = 0
+    skipped_no_attribute_score = 0
     with open(args.dataset_path, 'r', encoding='utf-8') as f:
         for line in f:
             try:
-                all_data.append(json.loads(line.strip()))
+                record = json.loads(line.strip())
+                if _has_at_least_one_attribute_score(record):
+                    all_data.append(record)
+                    kept += 1
+                else:
+                    skipped_no_attribute_score += 1
             except Exception as e:
                 continue
+    print(
+        f"Loaded {kept} records from local file and skipped "
+        f"{skipped_no_attribute_score} records without attribute scores."
+    )
+    if not all_data:
+        print("FATAL ERROR: No valid records left after filtering by attribute scores.")
+        sys.exit(1)
     # Create dataset from list (this handles inconsistent dictionaries much better)
     ds = datasets.Dataset.from_list(all_data)
 else:
-    # Standard loading for HuggingFace hub datasets
-    ds = datasets.load_dataset(args.dataset_path, split=args.dataset_split)
+    # Standard loading for HuggingFace hub datasets.
+    if args.dataset_split.lower() == "all":
+        ds_dict = datasets.load_dataset(args.dataset_path)
+        available_splits = list(ds_dict.keys())
+        if not available_splits:
+            print(f"FATAL ERROR: No splits available for dataset {args.dataset_path}.")
+            sys.exit(1)
+        print(f"Loading all splits from {args.dataset_path}: {available_splits}")
+        ds = datasets.concatenate_datasets([ds_dict[split_name] for split_name in available_splits])
+    else:
+        ds = datasets.load_dataset(args.dataset_path, split=args.dataset_split)
 if args.source is not None:
     ds = ds.filter(lambda x: x["source"] == args.source)
 if args.n_shards > 1:
