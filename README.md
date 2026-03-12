@@ -26,6 +26,7 @@ The multi-domain data (stage_1.jsonl & stage_2.jsonl) come from:
 This version uses **23 custom attributes** in `stage-1_prepare.py` and `stage-1_train.py`:
 
 ### Coherence (`co_`)
+
 - `co_discourse_structure`
 - `co_logical_consistency`
 - `co_mutual_grounding`
@@ -34,6 +35,7 @@ This version uses **23 custom attributes** in `stage-1_prepare.py` and `stage-1_
 - `co_topic_coherence`
 
 ### Commonsense (`cs_`)
+
 - `cs_causality`
 - `cs_coherence`
 - `cs_consistency`
@@ -42,6 +44,7 @@ This version uses **23 custom attributes** in `stage-1_prepare.py` and `stage-1_
 - `cs_reaction`
 
 ### Empathy (`em_`)
+
 - `em_emotional_awareness`
 - `em_emotional_validation`
 - `em_helpful_response`
@@ -50,6 +53,7 @@ This version uses **23 custom attributes** in `stage-1_prepare.py` and `stage-1_
 - `em_supportive_engagement`
 
 ### Multicultural (`mu_`)
+
 - `mu_coherence`
 - `mu_cultural_specificity`
 - `mu_cultural_value`
@@ -166,16 +170,24 @@ model:
     llama3:
       model_path: sfairXC/FsfairX-LLaMA3-RM-v0.1
       model_family: llama3
+      packaged_model_name: multi-domain-rm-llama-3-8b-it
     gemma2:
       model_path: sfairXC/FsfairX-Gemma2-RM-v0.1
       model_family: gemma2
+      packaged_model_name: multi-domain-rm-gemma-2-9b-it
     qwen3_nemotron:
       model_path: nvidia/Qwen3-Nemotron-8B-BRRM
       model_family: qwen3
+      packaged_model_name: multi-domain-rm-qwen-3-8b-it
 ```
 
 > Set `model.selected` in `config.yaml` to choose the active model.
 CLI arguments still override `config.yaml` values when explicitly provided.
+
+> `packaged_model_name` is used to auto-populate:
+
+- `stage_3_package.output_model_name`
+- `inference.model_name`
 
 ### Data Prepare selection via `config.yaml`
 
@@ -218,7 +230,8 @@ python3 evaluate.py --config_path config.yaml
 python3 predict.py --config_path config.yaml
 ```
 
-> Note: Stage 3 packaging supports the configured backbone profiles in `config.yaml` (Llama3, Gemma2, Qwen3-Nemotron). `evaluate.py` and `predict.py` use the same `inference.*` config keys.
+> Note: Stage 3 packaging supports the configured backbone profiles in `config.yaml` (Llama3, Gemma2, Qwen3-Nemotron).
+`evaluate.py` and `predict.py` use the same `inference.*` config keys.
 
 ## Directory Tree
 

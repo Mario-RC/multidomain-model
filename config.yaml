@@ -5,12 +5,15 @@ model:
     llama3:
       model_path: sfairXC/FsfairX-LLaMA3-RM-v0.1
       model_family: llama3
+      packaged_model_name: multi-domain-rm-llama-3-8b-it
     gemma2:
       model_path: sfairXC/FsfairX-Gemma2-RM-v0.1
       model_family: gemma2
+      packaged_model_name: multi-domain-rm-gemma-2-9b-it
     qwen3_nemotron:
       model_path: nvidia/Qwen3-Nemotron-8B-BRRM
       model_family: qwen3
+      packaged_model_name: multi-domain-rm-qwen-3-8b-it
 
 
 stage_1_prepare:
@@ -71,11 +74,11 @@ stage_2_train:
 
 stage_3_package:
   model_parent_dir: model
-  output_model_name: multi-domain-rm-gemma-2-9b-it
+  output_model_name: null # Auto-set from model.selected using packaged_model_name.
 
 
 # Inference target model (evaluate and predict).
 inference:
   model_parent_dir: model
-  model_name: multi-domain-rm-gemma-2-9b-it
+  model_name: null # Auto-set from model.selected using packaged_model_name.
   model_path: null

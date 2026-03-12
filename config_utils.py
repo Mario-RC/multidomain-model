@@ -10,6 +10,48 @@ def cli_has_flag(flag: str, argv=None) -> bool:
     return any(arg == flag or arg.startswith(f"{flag}=") for arg in args)
 
 
+def apply_selected_model_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(config, dict):
+        return config
+
+    model_cfg = config.get("model")
+    if not isinstance(model_cfg, dict):
+        return config
+
+    selected = model_cfg.get("selected")
+    registry = model_cfg.get("registry", {})
+    if not isinstance(registry, dict) or not selected or selected not in registry:
+        return config
+
+    selected_model_cfg = registry.get(selected, {})
+    if not isinstance(selected_model_cfg, dict):
+        return config
+
+    # Project-level packaged model naming by profile.
+    profile_name_map = {
+        "llama3": "multi-domain-rm-llama-3-8b-it",
+        "gemma2": "multi-domain-rm-gemma-2-9b-it",
+        "qwen3_nemotron": "multi-domain-rm-qwen-3-8b-it",
+    }
+    target_model_name = selected_model_cfg.get("packaged_model_name") or profile_name_map.get(selected)
+    if not target_model_name:
+        return config
+
+    stage3_cfg = config.get("stage_3_package")
+    if not isinstance(stage3_cfg, dict):
+        stage3_cfg = {}
+        config["stage_3_package"] = stage3_cfg
+    stage3_cfg["output_model_name"] = str(target_model_name)
+
+    inference_cfg = config.get("inference")
+    if not isinstance(inference_cfg, dict):
+        inference_cfg = {}
+        config["inference"] = inference_cfg
+    inference_cfg["model_name"] = str(target_model_name)
+
+    return config
+
+
 def load_yaml_config(config_path: str) -> Dict[str, Any]:
     if not config_path:
         return {}
@@ -19,6 +61,7 @@ def load_yaml_config(config_path: str) -> Dict[str, Any]:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
         return {}
+    data = apply_selected_model_defaults(data)
     return data
 
 

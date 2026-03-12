@@ -44,6 +44,8 @@ def main() -> None:
     use_cuda = torch.cuda.is_available()
     dtype = torch.bfloat16 if use_cuda else torch.float32
 
+    print(f"Loading model: {path}")
+
     # `device_map="auto"` requires `_no_split_modules` in custom model classes.
     # For this project model, load on a single GPU when CUDA is available.
     model = RewardModelWithGating.from_pretrained(

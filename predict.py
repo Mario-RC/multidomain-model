@@ -80,6 +80,7 @@ def main() -> None:
 
     config = load_yaml_config(args.config_path)
     model_path = _resolve_inference_model_path(config, args.model_path, args.model_parent_dir, args.model_name)
+    print(f"Loading model: {model_path}")
 
     # Initialize the local model.
     rm = MultiDomainRMPipeline(model_path)
