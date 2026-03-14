@@ -18,9 +18,9 @@ logs/
 *.pt
 
 # large raw data files (keep templates/configs only)
-armo-rm/data/stage_1.jsonl
-armo-rm/data/stage_2.jsonl
-data/stage_1.jsonl
-data/stage_2.jsonl
-stage_1.jsonl
-stage_2.jsonl
+armo-rm/data/Multi-Domain-Data-Scoring.jsonl
+armo-rm/data/Multi-Domain-Data-Preference-Pairs.jsonl
+data/Multi-Domain-Data-Scoring.jsonl
+data/Multi-Domain-Data-Preference-Pairs.jsonl
+Multi-Domain-Data-Scoring.jsonl
+Multi-Domain-Data-Preference-Pairs.jsonl

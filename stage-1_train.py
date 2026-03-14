@@ -37,10 +37,16 @@ parser.add_argument(
     help="Path or HF ID of the base reward model (used for naming output).",
 )
 parser.add_argument(
-    "--dataset_name",
+    "--multi_objective_dataset_name",
     type=str,
     default=None,
-    help="Dataset name produced by stage-1_prepare (e.g., 'mdo').",
+    help="Dataset base name produced by stage-1_prepare (e.g., 'stage_1').",
+)
+parser.add_argument(
+    "--dataset_split",
+    type=str,
+    default="train",
+    help="Split tag used by stage-1_prepare for folder/filename suffix (e.g., train, all).",
 )
 parser.add_argument(
     "--embeddings_dir",
@@ -54,14 +60,21 @@ parser.add_argument(
     default=None,
     help="Optional override for saving regression weights. Defaults to ./model/regression_weights/.",
 )
+parser.add_argument(
+    "--model_family",
+    type=str,
+    default="llama3",
+    help="Model family (llama3, gemma2, qwen3, auto).",
+)
 args = parser.parse_args()
 
 config = load_yaml_config(args.config_path)
 args = apply_section_overrides(args, config.get("stage_1_train", {}), skip_keys={"model_path"})
 args = resolve_model_from_config(args, config, needs_family=False)
 
-if not args.dataset_name:
-    print("FATAL ERROR: --dataset_name is required (or set stage_1_train.dataset_name in config.yaml).")
+
+if not args.multi_objective_dataset_name:
+    print("FATAL ERROR: --multi_objective_dataset_name is required (or set stage_1_train.multi_objective_dataset_name in config.yaml).")
     sys.exit(1)
 
 # Derive a short model name for paths
@@ -97,8 +110,9 @@ if args.embeddings_dir:
 else:
     embeddings_base_dir = os.path.join(default_base_data_dir, "embeddings", args.model_name)
 
-# Specific dataset folder
-embeddings_folder_path = os.path.join(embeddings_base_dir, args.dataset_name)
+# Specific dataset folder matches Stage 1 prepare naming (<dataset>-<split>)
+dataset_folder = f"{args.multi_objective_dataset_name}-{args.dataset_split}"
+embeddings_folder_path = os.path.join(embeddings_base_dir, dataset_folder)
 print(f"Looking for embedding files inside: {embeddings_folder_path}")
 
 # Collect shard files
@@ -106,7 +120,7 @@ embedding_files = sorted(glob(os.path.join(embeddings_folder_path, "*.safetensor
 
 if not embedding_files:
     print(f"FATAL ERROR: No embedding files (*.safetensors) found inside: {embeddings_folder_path}")
-    print("Ensure stage-1_prepare.py created this folder, and --dataset_name matches that folder.")
+    print("Ensure stage-1_prepare.py created this folder, and --multi_objective_dataset_name matches that folder.")
     sys.exit(1)
 
 # ---------------------------
@@ -313,7 +327,7 @@ except OSError as e:
     print(f"FATAL ERROR: Could not create output directory {save_dir}: {e}")
     sys.exit(1)
 
-save_path_weights = os.path.join(save_dir, f"{args.model_name}_{args.dataset_name}.pt")
+save_path_weights = os.path.join(save_dir, f"{args.model_name}_{args.multi_objective_dataset_name}.pt")
 
 print(f"Saving regression weights to {save_path_weights}")
 try:

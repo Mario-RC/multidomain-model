@@ -11,13 +11,14 @@ The goal is to train a reward model in three stages:
 3. **Stage 3 (Packaging):** Merge Stage 1 regression weights and Stage 2 gating weights into a final packaged reward model for inference.
 4. **Evaluate:** Inspect global reward score and top contributing attributes.
 5. **Predict:** Compare candidate responses with the packaged reward model.
+
 ---
 
 ## Data Source
 
-The multi-domain data (stage_1.jsonl & stage_2.jsonl) come from:
+The multi-domain data (Multi-Domain-Data-Scoring.jsonl & Multi-Domain-Data-Preference-Pairs.jsonl) come from:
 
-- https://github.com/mestecha/multidomain_data_scoring/tree/main
+- https://github.com/mestecha/multidomain_data_scoring
 
 ---
 
@@ -70,20 +71,26 @@ This version uses **23 custom attributes** in `stage-1_prepare.py` and `stage-1_
 pip install -r requirements.txt
 ```
 
+> Recommended: install `flash-attn` to speed up attention.
+
 Base script: `mdorm.sh`
 
 ```bash
 ./mdorm.sh
 ```
 
-Is intentionally fixed to Llama3 defaults for a stable baseline run.
+`mdorm.sh` is intentionally fixed to Llama3 defaults for a stable baseline run.
+
+Per-model scripts are also available: `mdorm_llama3.sh`, `mdorm_gemma2.sh`, `mdorm_qwen.sh`.
 
 ### Stage 1 prepare
 ```bash
 python3 stage-1_prepare.py \
   --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
-  --dataset_path data/stage_1 \
-  --output_dataset_name mdo \
+  --model_family llama3 \
+  --dataset_path data/Multi-Domain-Data-Scoring \
+  --output_dataset_name Multi-Domain-Data-Scoring \
+  --dataset_split train \
   --n_shards 1 --shard_idx 1 --device 0
 ```
 
@@ -91,7 +98,9 @@ python3 stage-1_prepare.py \
 ```bash
 python3 stage-1_train.py \
   --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
-  --dataset_name mdo
+  --model_family llama3 \
+  --multi_objective_dataset_name Multi-Domain-Data-Scoring \
+  --dataset_split train
 ```
 
 ### Stage 2 prepare (preference data)
@@ -99,8 +108,10 @@ python3 stage-1_train.py \
 python3 stage-2_prepare.py \
   --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
   --model_family llama3 \
-  --dataset_path data/stage_2 \
-  --dataset_split all --n_shards 1 --shard_idx 1 --device 0
+  --dataset_path data/Multi-Domain-Data-Preference-Pairs \
+  --output_dataset_name Multi-Domain-Data-Preference-Pairs \
+  --dataset_split train \
+  --n_shards 1 --shard_idx 1 --device 0
 ```
 
 ### Stage 2 prepare (reference data)
@@ -109,7 +120,9 @@ python3 stage-2_prepare.py \
   --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
   --model_family llama3 \
   --dataset_path RLHFlow/UltraFeedback-preference-standard \
-  --dataset_split all --n_shards 1 --shard_idx 1 --device 0
+  --output_dataset_name UltraFeedback-preference-standard \
+  --dataset_split train \
+  --n_shards 1 --shard_idx 1 --device 0
 ```
 
 ### Stage 2 prepare (reward-bench eval data)
@@ -118,7 +131,9 @@ python3 stage-2_prepare.py \
   --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
   --model_family llama3 \
   --dataset_path allenai/reward-bench \
-  --dataset_split filtered --n_shards 1 --shard_idx 1 --device 0
+  --output_dataset_name reward-bench \
+  --dataset_split filtered \
+  --n_shards 1 --shard_idx 1 --device 0
 ```
 
 ### Stage 2 train
@@ -126,30 +141,33 @@ python3 stage-2_prepare.py \
 python3 stage-2_train.py \
   --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
   --model_family llama3 \
-  --multi_objective_dataset mdo \
-  --preference_dataset data/stage_2 \
-  --reference_dataset RLHFlow/UltraFeedback-preference-standard \
-  --eval_reward_bench --device 0
+  --multi_objective_dataset_name Multi-Domain-Data-Scoring \
+  --preference_dataset_name Multi-Domain-Data-Preference-Pairs \
+  --reference_dataset_name UltraFeedback-preference-standard \
+  --dataset_split train \
+  --eval_reward_bench \
+  --device 0
 ```
 
 ### Stage 3 Packaging Model
 ```bash
 python3 stage-3_package_model.py \
-  --model_parent_dir model \
+  --model_path sfairXC/FsfairX-LLaMA3-RM-v0.1 \
+  --model_family llama3 \
   --output_model_name multi-domain-rm-llama-3-8b-it
 ```
 
 ### Evaluate the packaged model
 ```bash
 python3 evaluate.py \
-  --model_parent_dir model \
+  --model_family llama3 \
   --model_name multi-domain-rm-llama-3-8b-it
 ```
 
 ### Run quick prediction comparison
 ```bash
 python3 predict.py \
-  --model_parent_dir model \
+  --model_family llama3 \
   --model_name multi-domain-rm-llama-3-8b-it
 ```
 
@@ -175,7 +193,7 @@ model:
       model_path: sfairXC/FsfairX-Gemma2-RM-v0.1
       model_family: gemma2
       packaged_model_name: multi-domain-rm-gemma-2-9b-it
-    qwen3_nemotron:
+    qwen3:
       model_path: nvidia/Qwen3-Nemotron-8B-BRRM
       model_family: qwen3
       packaged_model_name: multi-domain-rm-qwen-3-8b-it
@@ -198,14 +216,17 @@ stage_2_prepare:
   profile: preference_data
   presets:
     preference_data:
-      dataset_path: data/stage_2
-      dataset_split: all
+      dataset_path: data/Multi-Domain-Data-Preference-Pairs
+      dataset_split: train
+      output_dataset_name: Multi-Domain-Data-Preference-Pairs
     reference_data:
       dataset_path: RLHFlow/UltraFeedback-preference-standard
-      dataset_split: all
+      dataset_split: train
+      output_dataset_name: UltraFeedback-preference-standard
     reward-bench_eval_data:
       dataset_path: allenai/reward-bench
       dataset_split: filtered
+      output_dataset_name: reward-bench
 ```
 
 > Set `stage_2_prepare.profile` in `config.yaml` to choose the active profile.
@@ -239,23 +260,23 @@ python3 predict.py --config_path config.yaml
 model/
 ├── embeddings/
 │   └── <model_selected>/
-│       ├── <dataset_name>/
-│       │   └── <dataset_name>-00001-of-00001.safetensors
+│       ├── <multi_objective_dataset_name>-<split>/
+│       │   └── <multi_objective_dataset_name>-<split>.safetensors
 │       │
 │       ├── reward-bench-filtered/
 │       │   └── reward-bench-filtered.safetensors
 │       │
-│       ├── stage_2-all/
-│       │   └── stage_2-all.safetensors
+│       ├── <preference_dataset_name>-<split>/
+│       │   └── <preference_dataset_name>-<split>.safetensors
 │       │
-│       └── UltraFeedback-preference-standard-all/
-│           └── UltraFeedback-preference-standard-all.safetensors
+│       └── <reference_dataset_name>-<split>/
+│           └── <reference_dataset_name>-<split>.safetensors
 │
 ├── gating_network/
-│   └── gating_network_<model_selected>_mo_<dataset_name>_pref_stage_2-all_T10.0_N2000_seed0.pt
+│   └── gating_network_<model_selected>_mo_<multi_objective_dataset_name>_pref_<preference_dataset_name>-<split>_T10.0_N2000_seed0.pt
 │
 ├── regression_weights/
-│   └── <model_selected>_<dataset_name>.pt
+│   └── <model_selected>_<multi_objective_dataset_name>.pt
 │
 └── multi-domain-rm-<model_name>/
   ├── config.json
@@ -268,7 +289,7 @@ model/
 ## Artifact Structure
 
 - `model/embeddings/<model_name>/<dataset_name>/*.safetensors`
-- `model/gating_network/gating_network_<model_name>_mo_<dataset_name>_pref_stage_2-all_T10.0_N2000_seed0.pt`
+- `model/gating_network/gating_network_<model_name>_mo_<multi_objective_dataset_name>_pref_<preference_dataset_name>-<split>_T10.0_N2000_seed0.pt`
 - `model/regression_weights/<model_name>_<dataset_name>.pt`
 - `model/<packaged_model_name>/`
 

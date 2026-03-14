@@ -12,6 +12,17 @@ from argparse import ArgumentParser
 from datetime import datetime
 from config_utils import cli_has_flag, load_yaml_config, apply_section_overrides, resolve_model_from_config
 
+
+def _build_save_paths(base_data_dir: str, model_name: str, dataset_folder: str, base_file_stem: str, n_shards: int, shard_idx: int):
+    """Construct output dir and filename consistently with Stage 1 save logic."""
+    final_dir = os.path.join(base_data_dir, "embeddings", model_name, dataset_folder)
+    os.makedirs(final_dir, exist_ok=True)
+    if n_shards > 1:
+        file_name = f"{base_file_stem}-{shard_idx:05d}-of-{n_shards:05d}.safetensors"
+    else:
+        file_name = f"{base_file_stem}.safetensors"
+    return final_dir, os.path.join(final_dir, file_name)
+
 # Enable TF32 for faster matmul on supported GPUs
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -68,6 +79,16 @@ def _has_at_least_one_attribute_score(example: dict) -> bool:
     return False
 
 
+def _is_train_split(example: dict) -> bool:
+    """Keep only samples explicitly marked as train; default to keep when missing."""
+    split_value = example.get("split")
+    if split_value is None and isinstance(example.get("metadata"), dict):
+        split_value = example["metadata"].get("split")
+    if split_value is None:
+        return True
+    return str(split_value).lower() == "train"
+
+
 def _resolve_local_dataset_file(dataset_path: str):
     """Resolve local JSON/JSONL path, accepting optional missing extension."""
     candidate_paths = [dataset_path]
@@ -82,11 +103,16 @@ def _resolve_local_dataset_file(dataset_path: str):
 
 def _load_tokenizer_robust(model_path: str):
     """Load tokenizer with fallback to slow tokenizer when fast conversion deps are missing."""
+    trust_remote_code = _requires_remote_code(model_path)
     try:
-        return AutoTokenizer.from_pretrained(model_path)
+        return AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust_remote_code)
     except (ValueError, ImportError) as e:
         print(f"Warning: Fast tokenizer load failed ({e}). Retrying with use_fast=False...")
-        return AutoTokenizer.from_pretrained(model_path, use_fast=False)
+        return AutoTokenizer.from_pretrained(model_path, use_fast=False, trust_remote_code=trust_remote_code)
+
+
+def _requires_remote_code(model_path: str) -> bool:
+    return "qwen3" in str(model_path).lower()
 
 def find_token_for_gating(lst, model_family):
     """Return the start index of the last model-specific token pattern."""
@@ -124,6 +150,7 @@ parser.add_argument("--config_path", type=str, default="config.yaml", help="Path
 parser.add_argument("--model_key", type=str, default=None, help="Model key defined in config.yaml:model:registry.")
 parser.add_argument("--model_path", type=str, default=None, help="Path to the pre-trained model (HuggingFace path or local folder).")
 parser.add_argument("--model_family", type=str, default="llama3", help="Model family (llama3, gemma2, qwen3, auto)")
+parser.add_argument("--output_dataset_name", type=str, default=None, help="Optional override for output dataset folder/file prefix.")
 parser.add_argument("--dataset_path", type=str, default="RLHFlow/UltraFeedback-preference-standard", help="Path to the dataset (HuggingFace path or local folder)")
 parser.add_argument("--source", default=None, type=str, help="Source filter for the dataset")
 parser.add_argument(
@@ -166,11 +193,14 @@ if not args.model_path:
     sys.exit(1)
 
 # Validate model family against loaded model config.
-config = AutoConfig.from_pretrained(args.model_path)
+config = AutoConfig.from_pretrained(
+    args.model_path,
+    trust_remote_code=_requires_remote_code(args.model_path),
+)
 if args.model_family == "llama3":
-    assert config.model_type == "llama"
+    assert str(config.model_type).lower() in {"llama3", "llama"}, f"Expected llama/llama3 model_type, got {config.model_type}"
 elif args.model_family == "gemma2":
-    assert config.model_type == "gemma2"
+    assert str(config.model_type).lower() in {"gemma2", "gemma"}, f"Expected gemma/gemma2 model_type, got {config.model_type}"
 elif args.model_family in {"qwen3", "auto"}:
     pass
 else:
@@ -182,10 +212,10 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 BASE_DATA_DIR = os.path.join(script_dir, "model")
 
 model_name = args.model_path.split("/")[-1]
-dataset_name = args.dataset_path.split("/")[-1]
+dataset_base = args.output_dataset_name or args.dataset_path.split("/")[-1]
 if args.source is not None:
-    dataset_name += f"-{args.source}"
-dataset_name += f"-{args.dataset_split}"
+    dataset_base += f"-{args.source}"
+dataset_name = f"{dataset_base}-{args.dataset_split}"
 
 # Final save directory: .../embeddings/<model_name>/<dataset_name>
 final_dir = os.path.join(BASE_DATA_DIR, "embeddings", model_name, dataset_name)
@@ -200,11 +230,15 @@ if local_dataset_file is not None:
     print(f"Manually loading local JSONL file: {local_dataset_file}")
     import json
     kept = 0
+    skipped_non_train_split = 0
     skipped_no_attribute_score = 0
     with open(local_dataset_file, 'r', encoding='utf-8') as f:
         for line in f:
             try:
                 record = json.loads(line.strip())
+                if not _is_train_split(record):
+                    skipped_non_train_split += 1
+                    continue
                 if _has_at_least_one_attribute_score(record):
                     all_data.append(record)
                     kept += 1
@@ -214,7 +248,8 @@ if local_dataset_file is not None:
                 continue
     print(
         f"Loaded {kept} records from local file and skipped "
-        f"{skipped_no_attribute_score} records without attribute scores."
+        f"{skipped_no_attribute_score} records without attribute scores and "
+        f"{skipped_non_train_split} records from non-train split."
     )
     if not all_data:
         print("FATAL ERROR: No valid records left after filtering by attribute scores.")
@@ -225,6 +260,7 @@ else:
     # Standard loading for HuggingFace hub datasets.
     if args.dataset_split.lower() == "all":
         ds_dict = datasets.load_dataset(args.dataset_path)
+        assert isinstance(ds_dict, datasets.DatasetDict)
         available_splits = list(ds_dict.keys())
         if not available_splits:
             print(f"FATAL ERROR: No splits available for dataset {args.dataset_path}.")
@@ -233,6 +269,13 @@ else:
         ds = datasets.concatenate_datasets([ds_dict[split_name] for split_name in available_splits])
     else:
         ds = datasets.load_dataset(args.dataset_path, split=args.dataset_split)
+        assert isinstance(ds, datasets.Dataset)
+
+# Keep only train split rows when a split column exists.
+if "split" in ds.column_names:
+    original_len = len(ds)
+    ds = ds.filter(lambda x: str(x.get("split", "train")).lower() == "train")
+    print(f"Filtered dataset by split=train: kept {len(ds)} of {original_len} rows.")
 if args.source is not None:
     ds = ds.filter(lambda x: x["source"] == args.source)
 if args.n_shards > 1:
@@ -243,9 +286,10 @@ if args.n_shards > 1:
 device = f"cuda:{args.device}"
 model = AutoModel.from_pretrained(
     args.model_path,
-    torch_dtype=torch.bfloat16,  # bf16 reduces memory footprint on supported GPUs.
+    dtype=torch.bfloat16,  # bf16 reduces memory footprint on supported GPUs.
     device_map=device,
     attn_implementation="flash_attention_2",  # Use FlashAttention v2 when available.
+    trust_remote_code=_requires_remote_code(args.model_path),
 )
 tokenizer = _load_tokenizer_robust(args.model_path)
 
@@ -254,7 +298,8 @@ embeddings = []
 prompt_embeddings = []
 
 # Process each preference pair.
-for example in tqdm(ds, desc="Examples"):
+for example in tqdm(ds, desc="Examples"):  # type: ignore[arg-type]
+    example: dict
     # Always extract chosen and rejected responses
     chosen_response = example["chosen"]
     rejected_response = example["rejected"]
@@ -286,7 +331,7 @@ for example in tqdm(ds, desc="Examples"):
     for iter_example in [full_chosen, full_rejected]:
         # Render conversation text via the tokenizer chat template.
         conv_formatted = _render_chat_text(tokenizer, iter_example)
-        # Keep the old Llama behavior without hardcoding a specific checkpoint name.
+        # Keep the old Llama 3 behavior without hardcoding a specific checkpoint name.
         if tokenizer.bos_token and conv_formatted.startswith(tokenizer.bos_token):
             conv_formatted = conv_formatted[len(tokenizer.bos_token):]
 
@@ -322,17 +367,14 @@ for example in tqdm(ds, desc="Examples"):
 embeddings = torch.stack(embeddings)
 prompt_embeddings = torch.stack(prompt_embeddings)
 
-# Ensure output directory exists.
-os.makedirs(final_dir, exist_ok=True)
-
-# Build file name with optional shard suffix.
-file_name = (
-    f"{dataset_name}-{args.shard_idx:05d}-of-{args.n_shards:05d}.safetensors"
-    if args.n_shards > 1
-    else f"{dataset_name}.safetensors"
+final_dir, save_path_full = _build_save_paths(
+    base_data_dir=BASE_DATA_DIR,
+    model_name=model_name,
+    dataset_folder=dataset_name,
+    base_file_stem=dataset_name,
+    n_shards=args.n_shards,
+    shard_idx=args.shard_idx,
 )
-
-save_path_full = os.path.join(final_dir, file_name)
 
 # Save embeddings using `safetensors`.
 save_file(

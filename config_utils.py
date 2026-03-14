@@ -31,7 +31,7 @@ def apply_selected_model_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     profile_name_map = {
         "llama3": "multi-domain-rm-llama-3-8b-it",
         "gemma2": "multi-domain-rm-gemma-2-9b-it",
-        "qwen3_nemotron": "multi-domain-rm-qwen-3-8b-it",
+        "qwen3": "multi-domain-rm-qwen-3-8b-it",
     }
     target_model_name = selected_model_cfg.get("packaged_model_name") or profile_name_map.get(selected)
     if not target_model_name:

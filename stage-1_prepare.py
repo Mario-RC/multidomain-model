@@ -3,6 +3,7 @@
 import os
 import sys
 import math
+import warnings
 import torch
 import datasets
 # from datasets import Features, Value, Sequence # No longer needed for loading
@@ -15,6 +16,17 @@ import traceback
 import json
 from datetime import datetime
 from config_utils import load_yaml_config, apply_section_overrides, resolve_model_from_config
+
+
+def _build_save_paths(base_data_dir: str, model_name: str, dataset_folder: str, base_file_stem: str, n_shards: int, shard_idx: int):
+    """Construct output dir and filename consistently with Stage 2 save logic."""
+    final_dir = os.path.join(base_data_dir, "embeddings", model_name, dataset_folder)
+    os.makedirs(final_dir, exist_ok=True)
+    if n_shards > 1:
+        file_name = f"{base_file_stem}-{shard_idx:05d}-of-{n_shards:05d}.safetensors"
+    else:
+        file_name = f"{base_file_stem}.safetensors"
+    return final_dir, os.path.join(final_dir, file_name)
 
 # Enable TF32 for faster matmul on supported GPUs
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -41,6 +53,14 @@ def _has_at_least_one_attribute_score(record: dict) -> bool:
     return False
 
 
+def _keep_split(record: dict, target_split: str) -> bool:
+    """Split filter aligned with Stage 2: keep all when target is 'all'."""
+    if target_split == "all":
+        return True
+    split_value = record.get("split", "train")
+    return str(split_value).lower() == target_split
+
+
 def _resolve_local_dataset_file(dataset_path: str):
     """Resolve local JSON/JSONL path, accepting optional missing extension."""
     candidate_paths = [dataset_path]
@@ -55,11 +75,17 @@ def _resolve_local_dataset_file(dataset_path: str):
 
 def _load_tokenizer_robust(model_path: str):
     """Load tokenizer with fallback to slow tokenizer when fast conversion deps are missing."""
+    trust_remote_code = _requires_remote_code(model_path)
     try:
-        return AutoTokenizer.from_pretrained(model_path)
+        return AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust_remote_code)
     except (ValueError, ImportError) as e:
         print(f"Warning: Fast tokenizer load failed ({e}). Retrying with use_fast=False...")
-        return AutoTokenizer.from_pretrained(model_path, use_fast=False)
+        return AutoTokenizer.from_pretrained(model_path, use_fast=False, trust_remote_code=trust_remote_code)
+
+
+def _requires_remote_code(model_path: str) -> bool:
+    model_path_l = str(model_path).lower()
+    return "qwen3" in model_path_l
 
 # Project-specific regression targets drawn from several evaluation dimensions
 attributes = [
@@ -82,15 +108,22 @@ print(f"Using {len(attributes)} custom attributes for regression.")
 parser = ArgumentParser(description="Stage 1 Prepare: Extract embeddings and labels for multi-objective regression.")
 parser.add_argument("--config_path", type=str, default="config.yaml", help="Path to YAML config file.")
 parser.add_argument("--model_key", type=str, default=None, help="Model key defined in config.yaml:model:registry.")
-parser.add_argument("--model_path", type=str, default="sfairXC/FsfairX-LLaMA3-RM-v0.1", help="Path or HF ID of the base Reward Model.")
+parser.add_argument("--model_path", type=str, default=None, help="Path or HF ID of the base Reward Model.")
+parser.add_argument("--model_family", type=str, default="llama3", help="Model family (llama3, gemma2, qwen3, auto)")
 parser.add_argument(
     "--dataset_path",
     type=str,
     nargs='+',
     default=None,
-    help="Path(s) to local JSON/JSONL files. Extension is optional (e.g. data/stage_1).",
+    help="Path(s) to local JSON/JSONL files. Extension is optional (e.g. data/Multi-Domain-Data-Scoring).",
 )
 parser.add_argument("--output_dataset_name", type=str, default=None, help="Unique name for the output dataset folder/file prefix.")
+parser.add_argument(
+    "--dataset_split",
+    type=str,
+    default="train",
+    help="Dataset split tag for filtering/naming (e.g., train, all).",
+)
 parser.add_argument("--n_shards", type=int, default=1, help="Total number of shards to divide the dataset into.")
 parser.add_argument("--shard_idx", type=int, default=1, help="Index of the current shard to process (1-based).")
 parser.add_argument("--device", type=int, default=0, help="CUDA device index for model inference (e.g., 0, 1).")
@@ -98,7 +131,9 @@ args = parser.parse_args()
 
 config = load_yaml_config(args.config_path)
 args = apply_section_overrides(args, config.get("stage_1_prepare", {}), skip_keys={"model_path"})
-args = resolve_model_from_config(args, config, needs_family=False)
+args = resolve_model_from_config(args, config, needs_family=True)
+
+target_split = str(args.dataset_split).lower()
 
 # Config values can provide a single string, while CLI with nargs='+' returns a list.
 # Normalize here so iteration always treats dataset paths as full path entries.
@@ -126,12 +161,16 @@ for path in args.dataset_path:
     print(f"Reading file: {resolved_path}")
     loaded_count = 0
     skipped_malformed = 0
+    skipped_non_train_split = 0
     skipped_no_attribute_score = 0
     try:
         with open(resolved_path, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f):
                 try:
                     record = json.loads(line.strip())
+                    if not _keep_split(record, target_split):
+                        skipped_non_train_split += 1
+                        continue
                     # Keep only records that contain a valid messages list
                     if 'messages' in record and isinstance(record['messages'], list):
                         if _has_at_least_one_attribute_score(record):
@@ -146,7 +185,8 @@ for path in args.dataset_path:
         print(
             f"Successfully loaded {loaded_count} records from {resolved_path}. "
             f"Skipped {skipped_malformed} malformed lines and "
-            f"{skipped_no_attribute_score} records without attribute scores."
+            f"{skipped_no_attribute_score} records without attribute scores and "
+            f"{skipped_non_train_split} records from non-train split."
         )
     except Exception as e:
         print(f"FATAL ERROR: Failed to read or parse file '{path}'.")
@@ -198,11 +238,16 @@ if args.n_shards > 1:
 device = f"cuda:{args.device}" if torch.cuda.is_available() and args.device >= 0 else "cpu"
 print(f"Loading model {args.model_path} onto device {device}...")
 try:
+    trust_remote_code = _requires_remote_code(args.model_path)
+    if trust_remote_code:
+        print("Using trust_remote_code=True for Qwen3 model loading compatibility.")
+
     model = AutoModel.from_pretrained(
         args.model_path,
-        torch_dtype=torch.bfloat16 if device != 'cpu' else torch.float32,
+        dtype=torch.bfloat16 if device != 'cpu' else torch.float32,
         attn_implementation="flash_attention_2" if device != 'cpu' else None,
         device_map=device,
+        trust_remote_code=trust_remote_code,
     )
     tokenizer = _load_tokenizer_robust(args.model_path)
     if tokenizer.pad_token is None:
@@ -305,18 +350,18 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 base_data_dir = os.path.join(script_dir, "model")
 model_name = args.model_path.split("/")[-1]
 output_dataset_folder_name = args.output_dataset_name
+dataset_folder_with_split = f"{output_dataset_folder_name}-{args.dataset_split}"
 
-final_dir = os.path.join(base_data_dir, "embeddings", model_name, output_dataset_folder_name)
-try:
-    os.makedirs(final_dir, exist_ok=True)
-    print(f"Ensured output directory exists: {final_dir}")
-except OSError as e:
-    print(f"FATAL ERROR: Could not create output directory {final_dir}: {e}")
-    sys.exit(1)
-
-# Filename encodes dataset name and shard indices for clarity
-file_name = f"{output_dataset_folder_name}-{args.shard_idx:05d}-of-{args.n_shards:05d}.safetensors"
-save_path_full = os.path.join(final_dir, file_name)
+base_file_stem = f"{output_dataset_folder_name}-{args.dataset_split}"
+final_dir, save_path_full = _build_save_paths(
+    base_data_dir=base_data_dir,
+    model_name=model_name,
+    dataset_folder=dataset_folder_with_split,
+    base_file_stem=base_file_stem,
+    n_shards=args.n_shards,
+    shard_idx=args.shard_idx,
+)
+print(f"Ensured output directory exists: {final_dir}")
 
 print(f"Saving embeddings and labels to: {save_path_full}")
 try:

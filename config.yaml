@@ -1,6 +1,6 @@
 # Choose the active model profile with `model.selected`.
 model:
-  selected: llama3
+  selected: qwen3
   registry:
     llama3:
       model_path: sfairXC/FsfairX-LLaMA3-RM-v0.1
@@ -10,22 +10,24 @@ model:
       model_path: sfairXC/FsfairX-Gemma2-RM-v0.1
       model_family: gemma2
       packaged_model_name: multi-domain-rm-gemma-2-9b-it
-    qwen3_nemotron:
+    qwen3:
       model_path: nvidia/Qwen3-Nemotron-8B-BRRM
       model_family: qwen3
       packaged_model_name: multi-domain-rm-qwen-3-8b-it
 
 
 stage_1_prepare:
-  dataset_path: data/stage_1
-  output_dataset_name: mdo
+  dataset_path: data/Multi-Domain-Data-Scoring
+  output_dataset_name: Multi-Domain-Data-Scoring
+  dataset_split: train
   n_shards: 1
   shard_idx: 1
   device: 0
 
 
 stage_1_train:
-  dataset_name: mdo # Must match output_dataset_name from stage_1_prepare.
+  multi_objective_dataset_name: Multi-Domain-Data-Scoring # Must match output_dataset_name from stage_1_prepare.
+  dataset_split: train
   embeddings_dir: null
   output_dir: null
 
@@ -35,26 +37,32 @@ stage_2_prepare:
   profile: preference_data
   presets:
     preference_data:
-      dataset_path: data/stage_2
-      dataset_split: all
+      dataset_path: data/Multi-Domain-Data-Preference-Pairs
+      dataset_split: train
+      output_dataset_name: Multi-Domain-Data-Preference-Pairs
     reference_data:
       dataset_path: RLHFlow/UltraFeedback-preference-standard
-      dataset_split: all
+      dataset_split: train
+      output_dataset_name: UltraFeedback-preference-standard
     reward-bench_eval_data:
       dataset_path: allenai/reward-bench
       dataset_split: filtered
+      output_dataset_name: reward-bench
   source: null
   n_shards: 1
   shard_idx: 1
   device: 0
   seq_len: 8192
+  output_dataset_name: null
 
 
 stage_2_train:
-  multi_objective_dataset: mdo
-  preference_dataset: data/stage_2
+  multi_objective_dataset_name: Multi-Domain-Data-Scoring
+  preference_dataset: data/Multi-Domain-Data-Preference-Pairs
   reference_dataset: RLHFlow/UltraFeedback-preference-standard
-  prepared_split: all
+  dataset_split: train
+  preference_dataset_name: Multi-Domain-Data-Preference-Pairs
+  reference_dataset_name: UltraFeedback-preference-standard
   device: "0"
   learning_rate: 0.001
   weight_decay: 0.0

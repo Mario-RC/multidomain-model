@@ -4,7 +4,7 @@
       "dialogue_id": "S1D-000001",
       "source_id": "co-abc123def456",
       "domain": "coherence | empathy | commonsense | multicultural",
-      "split": "train | val | test",
+      "split": "train | test",
       "messages": [
         {"role": "user | assistant", "content": "I thought athletes were tested for drugs."},
         {"role": "user | assistant", "content": "What kind of drugs?"},

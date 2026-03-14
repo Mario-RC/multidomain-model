@@ -277,15 +277,17 @@ def main():
     parser = ArgumentParser(description="Train ArmoRM Gating Network using DDP")
     parser.add_argument("--config_path", type=str, default="config.yaml", help="Path to YAML config file.")
     parser.add_argument("--model_key", type=str, default=None, help="Model key defined in config.yaml:model:registry.")
-    parser.add_argument("--model_path", type=str, default="sfairXC/FsfairX-LLaMA3-RM-v0.1", help="Path or HF ID of the base Reward Model")
-    parser.add_argument("--multi_objective_dataset", type=str, default="RLHFlow/ArmoRM-Multi-Objective-Data-v0.1", help="Dataset used for Stage 1 regression (name used for saving)")
-    parser.add_argument("--preference_dataset", type=str, default="RLHFlow/pair_data_v2_80K_wsafety", help="Pairwise preference dataset for Stage 2 training")
+    parser.add_argument("--model_path", type=str, default=None, help="Path or HF ID of the base Reward Model")
+    parser.add_argument("--multi_objective_dataset_name", type=str, default=None, help="Dataset name from stage-1_prepare output (e.g., 'stage_1').")
+    parser.add_argument("--preference_dataset", type=str, default=None, help="Pairwise preference dataset for Stage 2 training")
+    parser.add_argument("--preference_dataset_name", type=str, default=None, help="Preference dataset folder name (matches stage-2_prepare output_dataset_name).")
     parser.add_argument("--reference_dataset", type=str, default=None, help="Dataset for verbosity debiasing (defaults to preference_dataset if None)")
+    parser.add_argument("--reference_dataset_name", type=str, default=None, help="Reference dataset folder name (matches stage-2_prepare output_dataset_name).")
     parser.add_argument(
-        "--prepared_split",
+        "--dataset_split",
         type=str,
-        default="all",
-        help="Prepared split suffix used by stage-2_prepare outputs (e.g., all, train, val, test).",
+        default="train",
+        help="Split suffix used by stage-2_prepare outputs (e.g., train, all, val, test).",
     )
     # `--device` is mostly ignored under `torchrun`; `LOCAL_RANK` drives device selection.
     parser.add_argument("--device", type=str, default="0", help="Ignored by torchrun, uses LOCAL_RANK instead")
@@ -336,11 +338,11 @@ def main():
 
     # Extract short names used in filesystem paths.
     args.model_name = args.model_path.split("/")[-1]
-    args.multi_objective_dataset_name = args.multi_objective_dataset.split("/")[-1]
-
-    # Match stage-2_prepare output naming convention: <dataset>-<prepared_split>.
-    args.preference_dataset_name = args.preference_dataset.split("/")[-1] + f"-{args.prepared_split}"
-    args.reference_dataset_name = args.reference_dataset.split("/")[-1] + f"-{args.prepared_split}"
+    # Match stage-2_prepare output naming convention: <dataset>-<dataset_split>.
+    pref_base = args.preference_dataset_name or args.preference_dataset.split("/")[-1]
+    ref_base = args.reference_dataset_name or args.reference_dataset.split("/")[-1]
+    args.preference_dataset_name = f"{pref_base}-{args.dataset_split}"
+    args.reference_dataset_name = f"{ref_base}-{args.dataset_split}"
 
     # --- Define load paths ---
     # Preference embeddings path pattern (inside dataset-split folder).

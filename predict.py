@@ -45,7 +45,7 @@ class MultiDomainRMPipeline:
         self.model = RewardModelWithGating.from_pretrained(
             model_id,
             device_map=device_map,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_id,
@@ -57,15 +57,18 @@ class MultiDomainRMPipeline:
         self.model.eval()
 
     def __call__(self, messages: List[Dict[str, str]]) -> Dict[str, float]:
-        input_ids = self.tokenizer.apply_chat_template(
+        encoding = self.tokenizer.apply_chat_template(
             messages,
             return_tensors="pt",
             padding=True,
             truncation=self.truncation,
             max_length=self.max_length,
-        ).to(self.device)
+        )
+        input_ids = encoding["input_ids"].to(self.device)
+        attention_mask = encoding.get("attention_mask")
+        attention_mask = attention_mask.to(self.device) if attention_mask is not None else None
         with torch.no_grad():
-            output = self.model(input_ids)
+            output = self.model(input_ids=input_ids, attention_mask=attention_mask)
             score = output.score.float().item()
         return {"score": score}
 
@@ -74,8 +77,9 @@ def main() -> None:
     parser = ArgumentParser(description="Run quick prediction comparison using packaged reward model.")
     parser.add_argument("--config_path", type=str, default="config.yaml", help="Path to YAML config file.")
     parser.add_argument("--model_path", type=str, default=None, help="Optional override for packaged model path.")
-    parser.add_argument("--model_parent_dir", type=str, default=None, help="Optional packaged model parent directory.")
+    parser.add_argument("--model_parent_dir", type=str, default="model", help="Optional packaged model parent directory.")
     parser.add_argument("--model_name", type=str, default=None, help="Optional packaged model directory name.")
+    parser.add_argument("--model_family", type=str, default=None, help="Model family (llama3, gemma2, qwen3, auto).")
     args = parser.parse_args()
 
     config = load_yaml_config(args.config_path)

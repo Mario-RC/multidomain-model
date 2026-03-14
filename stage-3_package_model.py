@@ -7,6 +7,10 @@ from transformers import AutoConfig, AutoTokenizer
 from modeling_custom import RewardModelWithGating
 from config_utils import load_yaml_config, resolve_model_from_config
 
+
+def _requires_remote_code(model_path: str) -> bool:
+    return "qwen3" in str(model_path).lower()
+
 def _safe_torch_load(path: str):
     # Prefer safe weights-only loading when the installed PyTorch supports it.
     try:
@@ -40,9 +44,10 @@ def _build_defaults_from_config(config: dict, model_path: str):
     model_name = model_path.split("/")[-1]
     stage2_cfg = config.get("stage_2_train", {}) if isinstance(config, dict) else {}
     stage3_cfg = config.get("stage_3_package", {}) if isinstance(config, dict) else {}
-    multi_objective_dataset_name = str(stage2_cfg.get("multi_objective_dataset", "mdo")).split("/")[-1]
-    preference_dataset_name = str(stage2_cfg.get("preference_dataset", "data/stage_2")).split("/")[-1]
-    prepared_split = str(stage2_cfg.get("prepared_split", "all"))
+    multi_objective_dataset_name = str(stage2_cfg.get("multi_objective_dataset_name", "stage_1"))
+    preference_base = stage2_cfg.get("preference_dataset_name") or str(stage2_cfg.get("preference_dataset", "data/Multi-Domain-Data-Preference-Pairs")).split("/")[-1]
+    dataset_split = str(stage2_cfg.get("dataset_split", "train"))
+    preference_dataset_name = f"{preference_base}-{dataset_split}"
 
     stage1_weights_path = os.path.join(
         "model", "regression_weights", f"{model_name}_{multi_objective_dataset_name}.pt"
@@ -52,7 +57,7 @@ def _build_defaults_from_config(config: dict, model_path: str):
         "gating_network",
         (
             f"gating_network_{model_name}_mo_{multi_objective_dataset_name}_"
-            f"pref_{preference_dataset_name}-{prepared_split}_T10.0_N2000_seed0.pt"
+            f"pref_{preference_dataset_name}_T10.0_N2000_seed0.pt"
         ),
     )
     model_parent_dir = str(stage3_cfg.get("model_parent_dir", stage3_cfg.get("output_parent_dir", "model")))
@@ -70,12 +75,13 @@ def main() -> None:
     parser = ArgumentParser(description="Stage 3: package final reward model.")
     parser.add_argument("--config_path", type=str, default="config.yaml", help="Path to YAML config file.")
     parser.add_argument("--model_key", type=str, default=None, help="Model key defined in config.yaml:model:registry.")
-    parser.add_argument("--model_path", type=str, default="sfairXC/FsfairX-LLaMA3-RM-v0.1", help="Base model HF ID/path.")
+    parser.add_argument("--model_path", type=str, default=None, help="Base model HF ID/path.")
     parser.add_argument("--stage_1_weights_path", type=str, default=None, help="Optional override for Stage 1 regression weights path.")
     parser.add_argument("--stage_2_weights_path", type=str, default=None, help="Optional override for Stage 2 gating network weights path.")
-    parser.add_argument("--model_parent_dir", type=str, default=None, help="Optional output parent directory (e.g., model).")
+    parser.add_argument("--model_parent_dir", type=str, default="model", help="Optional output parent directory (e.g., model).")
     parser.add_argument("--output_model_name", type=str, default=None, help="Optional packaged model directory name.")
     parser.add_argument("--output_dir", type=str, default=None, help="Optional override for final packaged model output directory.")
+    parser.add_argument("--model_family", type=str, default=None, help="Model family (llama3, gemma2, qwen3, auto).")
     args = parser.parse_args()
 
     config = load_yaml_config(args.config_path)
@@ -91,15 +97,20 @@ def main() -> None:
     output_dir = args.output_dir or os.path.join(model_parent_dir, output_model_name)
 
     print("Loading configuration and tokenizer...")
-    model_config = AutoConfig.from_pretrained(args.model_path)
+    trust_remote_code = _requires_remote_code(args.model_path)
+    if trust_remote_code:
+        print("Using trust_remote_code=True for Qwen3 model loading compatibility.")
+
+    model_config = AutoConfig.from_pretrained(args.model_path, trust_remote_code=trust_remote_code)
     model_config.num_objectives = 23
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=trust_remote_code)
 
     print("Instantiating custom architecture with base model weights...")
     model = RewardModelWithGating.from_pretrained(
         args.model_path,
         config=model_config,
         ignore_mismatched_sizes=True,
+        trust_remote_code=trust_remote_code,
     )
 
     print(f"Loading Stage 1 regression weights from: {stage_1_weights_path}")
@@ -119,6 +130,15 @@ def main() -> None:
     if not isinstance(stage2_state_dict, dict):
         raise TypeError("Stage 2 checkpoint must resolve to a state_dict dictionary.")
     model.gating.load_state_dict(stage2_state_dict)
+
+    # Ensure the reward transform matrix is a clean identity (safetensors in
+    # downstream save must not persist NaNs if upstream checkpoints omitted it).
+    with torch.no_grad():
+        eye = torch.zeros_like(model.reward_transform_matrix)
+        eye.fill_(0.0)
+        diag = torch.arange(model.num_objectives, device=eye.device)
+        eye[diag, diag] = 1.0
+        model.reward_transform_matrix.data.copy_(eye)
 
     print(f"Saving finalized model to: {output_dir}")
     os.makedirs(output_dir, exist_ok=True)

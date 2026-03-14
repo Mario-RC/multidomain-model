@@ -35,8 +35,9 @@ def main() -> None:
     parser = ArgumentParser(description="Evaluate packaged reward model.")
     parser.add_argument("--config_path", type=str, default="config.yaml", help="Path to YAML config file.")
     parser.add_argument("--model_path", type=str, default=None, help="Optional override for packaged model path.")
-    parser.add_argument("--model_parent_dir", type=str, default=None, help="Optional packaged model parent directory.")
+    parser.add_argument("--model_parent_dir", type=str, default="model", help="Optional packaged model parent directory.")
     parser.add_argument("--model_name", type=str, default=None, help="Optional packaged model directory name.")
+    parser.add_argument("--model_family", type=str, default=None, help="Model family (llama3, gemma2, qwen3, auto).")
     args = parser.parse_args()
 
     config = load_yaml_config(args.config_path)
@@ -51,7 +52,7 @@ def main() -> None:
     model = RewardModelWithGating.from_pretrained(
         path,
         device_map={"": 0} if use_cuda else None,
-        torch_dtype=dtype,
+        dtype=dtype,
     )
     tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
     model.eval()
@@ -64,10 +65,13 @@ def main() -> None:
 
     messages = [{"role": "user", "content": prompt},
                 {"role": "assistant", "content": response}]
-    input_ids = tokenizer.apply_chat_template(messages, return_tensors="pt").to(device)
+    encoding = tokenizer.apply_chat_template(messages, return_tensors="pt", padding=True)
+    input_ids = encoding["input_ids"].to(device)
+    attention_mask = encoding.get("attention_mask")
+    attention_mask = attention_mask.to(device) if attention_mask is not None else None
 
     with torch.no_grad():
-        output = model(input_ids)
+        output = model(input_ids=input_ids, attention_mask=attention_mask)
         # Raw rewards for each of the 23 objectives.
         multi_obj_rewards = output.rewards.cpu().float()
         # Gating output (objective importance conditioned on the prompt).

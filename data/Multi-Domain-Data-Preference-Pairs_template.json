@@ -4,7 +4,7 @@
 
   "metadata": {
     "domain": "coherence | empathy | commonsense | multicultural",
-    "split": "train | val | test",
+    "split": "train | test",
     "generation_model": "gpt-5.1-batch",
     "turn_count": 3,
     "difficulty": "easy | medium | hard",
